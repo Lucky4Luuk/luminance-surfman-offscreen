@@ -24,6 +24,11 @@ use surfman::{
 };
 use winit::window::Window;
 
+use gl::types::{GLchar, GLenum, GLint, GLuint, GLvoid};
+
+pub use luminance_glow::Glow as LuminanceBackend;
+//pub use SurfmanSurface as LuminanceBackend;
+
 surfman::declare_surfman!();
 
 #[derive(thiserror::Error, Debug)]
@@ -51,20 +56,15 @@ unsafe impl GraphicsContext for SurfmanSurface {
 }
 
 impl SurfmanSurface {
-    /// Create a surface from a winit window
+    /// Create an offscreen surfman surface
     ///
-    /// > ⚠️ **Warning:** Because the surfman surface does not have access to the window event loop
-    /// > you will need to manualy call [`set_size`] on the surface when the window is resized.
-    pub fn from_winit_window(
-        window: &Window,
+    /// > ⚠️ **Warning:** You must correctly call `set_size`!
+    pub fn offscreen(
+		size: (usize, usize),
         shader_version: ShaderVersion,
     ) -> Result<Self, SurfmanError> {
         // Create a connection to the graphics provider from our winit window
-        let conn = Connection::from_winit_window(&window).map_err(surface_err)?;
-        // Create a native widget to attach the visible render surface to
-        let native_widget = conn
-            .create_native_widget_from_winit_window(&window)
-            .map_err(surface_err)?;
+        let conn = Connection::new().map_err(surface_err)?;
         // Create a hardware adapter that we can used to create graphics devices from
         let adapter = conn.create_hardware_adapter().map_err(surface_err)?;
         // Create a graphics device using our hardware adapter
@@ -83,7 +83,7 @@ impl SurfmanSurface {
             .create_context_descriptor(&context_attributes)
             .map_err(surface_err)?;
         // Define the surface type for our graphics surface ( a surface based on a native widget, i.e. not an offscreen surface )
-        let surface_type = SurfaceType::Widget { native_widget };
+        let surface_type = SurfaceType::Generic { size: Size2D::new(size.0 as i32, size.1 as i32) };
         // Create an OpenGL context
         let mut context = device
             .create_context(&context_descriptor, None)
@@ -102,14 +102,16 @@ impl SurfmanSurface {
         device.make_context_current(&context).map_err(surface_err)?;
 
         // Get a pointer to the OpenGL functions
-        let gl = unsafe {
+        let glc = unsafe {
             GlowContext::from_loader_function(
                 |s| device.get_proc_address(&context, s) as *const _,
                 shader_version,
             )
         };
 
-        let backend = Glow::from_context(gl)?;
+        let backend = Glow::from_context(glc)?;
+
+		gl::load_with(|s| device.get_proc_address(&context, s) as *const _);
 
         Ok(SurfmanSurface {
             backend,
@@ -134,6 +136,8 @@ impl SurfmanSurface {
             .bind_surface_to_context(&mut self.context, surface)
             .map_err(|(e, _)| surface_err(e))?;
 
+		unsafe { gl::BindFramebuffer(gl::FRAMEBUFFER, surface_info.framebuffer_object); }
+
         Ok(Framebuffer::back_buffer(self, [width, height])?)
     }
 
@@ -144,15 +148,41 @@ impl SurfmanSurface {
             .unbind_surface_from_context(&mut self.context)
             .map_err(surface_err)?
             .unwrap();
+
+		/*
         self.device
             .present_surface(&self.context, &mut surface)
             .map_err(surface_err)?;
+		*/
+
         self.device
             .bind_surface_to_context(&mut self.context, surface)
             .map_err(|(e, _)| surface_err(e))?;
 
         Ok(())
     }
+	
+	/// **Warning:** Ensure the current context is bound before using this function!
+	pub fn read_buffer(&self) -> (Vec<u8>, (usize, usize)) {
+		let surface_info = self.device.context_surface_info(&self.context).unwrap().unwrap();
+		let size = surface_info.size;
+		let (width, height) = (size.width as usize, size.height as usize);
+		//println!("w, h: ({}, {})", width, height);
+		let mut pixels: Vec<u8> = vec![0; width * height * 4];
+		unsafe {
+			gl::Flush();
+			gl::ReadPixels(
+				0,
+				0,
+				width as i32,
+				height as i32,
+				gl::RGBA,
+				gl::UNSIGNED_BYTE,
+				pixels.as_mut_ptr() as *mut GLvoid,
+			);
+		}
+		(pixels, (width, height))
+	}
 
     /// Set the size of the surface
     pub fn set_size(&mut self, size: [u32; 2]) -> Result<(), SurfmanError> {
