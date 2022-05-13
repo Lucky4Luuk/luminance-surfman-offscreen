@@ -16,8 +16,9 @@ use luminance::{
     framebuffer::{Framebuffer, FramebufferError},
     texture::Dim2,
 };
-pub use luminance_glow::ShaderVersion;
-use luminance_glow::{Context as GlowContext, Glow, StateQueryError};
+//pub use luminance_glow::ShaderVersion;
+//use luminance_glow::{Context as GlowContext, Glow, StateQueryError};
+use luminance_gl::gl33::{GL33, StateQueryError};
 use surfman::{
     Connection, Context, ContextAttributeFlags, ContextAttributes, Device, GLVersion,
     SurfaceAccess, SurfaceType,
@@ -26,7 +27,7 @@ use winit::window::Window;
 
 use gl::types::{GLchar, GLenum, GLint, GLuint, GLvoid};
 
-pub use luminance_glow::Glow as LuminanceBackend;
+pub use luminance_gl::GL33 as LuminanceBackend;
 //pub use SurfmanSurface as LuminanceBackend;
 
 surfman::declare_surfman!();
@@ -42,13 +43,13 @@ pub enum SurfmanError {
 }
 
 pub struct SurfmanSurface {
-    backend: Glow,
+    backend: GL33,
     device: Device,
     context: Context,
 }
 
 unsafe impl GraphicsContext for SurfmanSurface {
-    type Backend = Glow;
+    type Backend = GL33;
 
     fn backend(&mut self) -> &mut Self::Backend {
         &mut self.backend
@@ -61,7 +62,7 @@ impl SurfmanSurface {
     /// > ⚠️ **Warning:** You must correctly call `set_size`!
     pub fn offscreen(
 		size: (usize, usize),
-        shader_version: ShaderVersion,
+        //shader_version: ShaderVersion,
     ) -> Result<Self, SurfmanError> {
         // Create a connection to the graphics provider from our winit window
         let conn = Connection::new().map_err(surface_err)?;
@@ -102,6 +103,7 @@ impl SurfmanSurface {
         device.make_context_current(&context).map_err(surface_err)?;
 
         // Get a pointer to the OpenGL functions
+		/*
         let glc = unsafe {
             GlowContext::from_loader_function(
                 |s| device.get_proc_address(&context, s) as *const _,
@@ -110,8 +112,11 @@ impl SurfmanSurface {
         };
 
         let backend = Glow::from_context(glc)?;
+		*/
 
 		gl::load_with(|s| device.get_proc_address(&context, s) as *const _);
+
+		let backend = GL33::new()?;
 
         Ok(SurfmanSurface {
             backend,
@@ -121,7 +126,7 @@ impl SurfmanSurface {
     }
 
     /// Get the back buffer
-    pub fn back_buffer(&mut self) -> Result<Framebuffer<Glow, Dim2, (), ()>, SurfmanError> {
+    pub fn back_buffer(&mut self) -> Result<Framebuffer<GL33, Dim2, (), ()>, SurfmanError> {
         let surface = self
             .device
             .unbind_surface_from_context(&mut self.context)
